@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-0
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/data/postgres-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/data/postgres-1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-2
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/data/postgres-2
+
+---
+# use samba
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-0
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: pv-postgres-0
+    readOnly: false
+    volumeAttributes:
+      source: "//192.168.72.103/postgres-0"
+    nodeStageSecretRef:
+      name: cifs-credentials
+      namespace: default
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: pv-postgres-1
+    readOnly: false
+    volumeAttributes:
+      source: "//192.168.72.103/postgres-1"
+    nodeStageSecretRef:
+      name: cifs-credentials
+      namespace: default
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-postgres-2
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: pv-postgres-2
+    readOnly: false
+    volumeAttributes:
+      source: "//192.168.72.103/postgres-2"
+    nodeStageSecretRef:
+      name: cifs-credentials
+      namespace: default

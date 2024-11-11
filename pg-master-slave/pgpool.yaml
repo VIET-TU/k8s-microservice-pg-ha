@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgpool
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgpool
+  template:
+    metadata:
+      labels:
+        app: pgpool
+    spec:
+      containers:
+        - name: pgpool
+          image: bitnami/pgpool:4
+          ports:
+            - containerPort: 5432
+          env:
+            - name: PGPOOL_BACKEND_NODES
+              value: "0:postgres-0.postgres.default.svc.cluster.local:5432,1:postgres-1.postgres.default.svc.cluster.local:5432,2:postgres-2.postgres.default.svc.cluster.local:5432"
+            - name: PGPOOL_SR_CHECK_USER
+              value: "postgres"
+            - name: PGPOOL_SR_CHECK_PASSWORD
+              value: "postgres"
+            - name: PGPOOL_POSTGRES_USERNAME
+              value: "postgres"
+            - name: PGPOOL_POSTGRES_PASSWORD
+              value: "postgres"
+            - name: PGPOOL_ADMIN_USERNAME
+              value: "postgres"
+            - name: PGPOOL_ADMIN_PASSWORD
+              value: "postgres"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pgpool
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: pgpool-config
+        - name: scripts
+          configMap:
+            name: pgpool-config
+            items:
+              - key: failover.sh
+                path: failover.sh
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgpool
+spec:
+  ports:
+    - port: 5432
+      name: pgpool
+  selector:
+    app: pgpool
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgpool-config
+data:
+  pgpool.conf: |
+    listen_addresses = '*'
+    load_balance_mode = on
+    port = 5432
+
+    backend_hostname0 = 'postgres-0.postgres.default.svc.cluster.local'
+    backend_port0 = 5432
+    backend_weight0 = 1
+    backend_data_directory0 = '/var/lib/postgresql/data'
+    backend_flag0 = 'ALLOW_TO_FAILOVER'
+
+    backend_hostname1 = 'postgres-1.postgres.default.svc.cluster.local'
+    backend_port1 = 5432
+    backend_weight1 = 1
+    backend_data_directory1 = '/var/lib/postgresql/data'
+    backend_flag1 = 'ALLOW_TO_FAILOVER'
+
+    backend_hostname2 = 'postgres-2.postgres.default.svc.cluster.local'
+    backend_port2 = 5432
+    backend_weight2 = 1
+    backend_data_directory2 = '/var/lib/postgresql/data'
+    backend_flag2 = 'ALLOW_TO_FAILOVER'
+
+    sr_check_period = 10
+    sr_check_user = 'postgres'
+    sr_check_password = 'postgres'
+    sr_check_database = 'postgres'
+    health_check_period = 10
+    health_check_timeout = 20
+    health_check_user = 'postgres'
+    health_check_password = 'postgres'
+    health_check_database = 'postgres'
+    failover_command = '/scripts/failover.sh %d %H %P %R'
+  pcp.conf: |
+    postgres:md5$(echo -n 'postgres' | md5sum | awk '{print $1}')
+  pool_hba.conf: |
+    local   all         all                               trust
+    host    all         all         127.0.0.1/32          trust
+    host    all         all         ::1/128               trust
+    host    all         all         0.0.0.0/0             md5
+    host    replication all         samenet               md5
+  failover.sh: |
+    #!/bin/bash
+    FAILED_NODE_ID=$1
+    NEW_MASTER_HOST=$2
+    OLD_PRIMARY_HOST=$3
+    NEW_MASTER_ID=$4
+
+    if [ $FAILED_NODE_ID = 0 ]; then
+      psql -h $NEW_MASTER_HOST -U postgres -c "SELECT pg_promote();"
+    fi

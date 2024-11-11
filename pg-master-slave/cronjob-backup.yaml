@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "0 1 * * *" # Chạy vào 1 giờ sáng hàng ngày
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: viettu123/my-postgres:14
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+              command:
+                - "/bin/bash"
+                - "-c"
+                - |
+                  backup_dir="/backup"
+                  database_name="postgres"
+                  backup_file="$backup_dir/backup_$(date +"%Y-%m-%d-%H-%M-%S").sql"
+                  # Kết nối với database và thực hiện sao lưu
+                  PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -h postgres-0.postgres.default.svc.cluster.local -U $POSTGRES_USER -d $database_name > backup_file
+                  # Lưu trữ file backup vào S3 (hoặc bất kỳ nơi lưu trữ từ xa nào khác)
+                  backup_count=$(ls -1 $backup_dir | wc -l)
+                  if [ $backup_count -gt 7 ]; then
+                    oldest_backup=$(ls -t $backup_dir | tail -1)
+                    rm "$backup_dir/$oldest_backup"
+                  fi
+                  # aws s3 cp /backup/db-backup.sql s3://mybucket/db-backup.sql
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-volume
+              persistentVolumeClaim:
+                claimName: backup-pvc

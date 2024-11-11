@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: "postgres"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      initContainers:
+        - name: init-script-permissions
+          image: viettu123/my-postgres:14
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              service postgresql start
+              cp /config/* /scripts/ && chmod +x /scripts/*.sh
+              echo "Initializing database directory..."
+              echo "Checking contents of /var/lib/postgresql/14/main before copying..."
+              ls -la /var/lib/postgresql/14/main-backup
+              if [ -z "$(find /var/lib/postgresql/14/main-backup -maxdepth 1 -type f -name '[!.]*')" ]; then
+                echo "Directory does not exist. Creating and copying..."
+                mkdir -p /var/lib/postgresql/14/main-backup
+                cp -r /var/lib/postgresql/14/main/* /var/lib/postgresql/14/main-backup/
+              else
+                echo "Backup directory already exists. Skipping copy."
+              fi
+              chown -R postgres:postgres /var/lib/postgresql/14/main-backup/
+              chmod 0700 /var/lib/postgresql/14/main
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+            - name: script-volume
+              mountPath: /scripts
+            - name: pvc
+              mountPath: /var/lib/postgresql/14/main-backup
+      containers:
+        - name: postgres
+          image: viettu123/my-postgres:14
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/14/main
+            - name: ROLE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: PGPASSWORD
+          volumeMounts:
+            - name: pvc
+              mountPath: /var/lib/postgresql/14/main
+            - name: script-volume
+              mountPath: /docker-entrypoint-initdb.d
+            - name: config
+              mountPath: /etc/postgresql/14/main/pg_hba.conf
+              subPath: pg_hba.conf
+
+          command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              chown -R postgres:postgres /var/lib/postgresql/14/main
+              chmod 0700 /var/lib/postgresql/14/main
+              echo "listen_addresses = '*'" >> /etc/postgresql/14/main/postgresql.conf
+              if [ "$(hostname)" == "postgres-0" ]; then
+                service postgresql start
+                /docker-entrypoint-initdb.d/init-master.sh
+              elif [ "$(hostname)" == "postgres-1" ]; then
+                export SLOT_NAME="slave_1"
+                /docker-entrypoint-initdb.d/init-slave.sh
+              elif [ "$(hostname)" == "postgres-2" ]; then
+                export SLOT_NAME="slave_2"
+                /docker-entrypoint-initdb.d/init-slave.sh
+              fi
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-config
+        - name: config-volume
+          configMap:
+            name: postgres-config
+        - name: script-volume
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: hostpath
+        resources:
+          requests:
+            storage: 1Gi

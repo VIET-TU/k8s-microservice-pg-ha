@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+data:
+  pg_hba.conf: |
+    local   all             postgres                                peer
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             all                                     peer
+    # IPv4 local connections:
+    host    all             all             0.0.0.0/0               scram-sha-256
+    # IPv6 local connections:
+    host    all             all             ::1/128                 scram-sha-256
+    # Allow replication connections from localhost, by a user with the
+    # replication privilege.
+    local   replication     all                                     peer
+    host    replication     all             127.0.0.1/32            scram-sha-256
+    host    replication     all             ::1/128                 scram-sha-256
+    host    replication     replicator      0.0.0.0/0               md5
+  init-master.sh: |
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; then
+      sudo -u postgres psql -c "CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '${PGPASSWORD}';"
+      echo "User replicator created successfully."
+      else
+        echo "User replicator already exists."
+    fi
+    su - postgres -c "psql -c \"ALTER USER postgres PASSWORD '$POSTGRES_PASSWORD';\""
+    service postgresql restart
+    sleep infinity
+  init-slave.sh: |
+    #!/bin/bash
+    # Cấu hình
+    MASTER_HOST="postgres-0.postgres.default.svc.cluster.local"
+    PGUSER="replicator"
+    SLOT_NAME="${SLOT_NAME}"
+
+    # Kiểm tra sự tồn tại của replication slot
+    SLOT_EXISTS=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$MASTER_HOST" -U "$POSTGRES_USER" -t -c "SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT_NAME');" | xargs)
+
+    if [ "$SLOT_EXISTS" == "t" ]; then
+      service postgresql start
+      sleep 5
+      echo "Replication slot $SLOT_NAME already exists. Exiting."
+    else
+      echo "Replication slot $SLOT_NAME does not exist. Proceeding with pg_basebackup."
+      # Thực hiện pg_basebackup
+      service postgresql stop
+      sleep 5      
+      rm -rf /var/lib/postgresql/14/main/*
+      sudo -u postgres PGPASSWORD="${PGPASSWORD}" pg_basebackup -h "$MASTER_HOST" -D /var/lib/postgresql/14/main -U "$PGUSER" -P -v -R -X stream -C -S "$SLOT_NAME"
+      service postgresql start
+      if [ $? -eq 0 ]; then
+        echo "pg_basebackup completed successfully."
+      else
+        echo "pg_basebackup failed."
+        exit 1
+      fi
+    fi
+    su - postgres -c "psql -c \"ALTER USER postgres PASSWORD '$POSTGRES_PASSWORD';\""
+    sleep infinity
